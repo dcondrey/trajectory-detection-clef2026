@@ -1,227 +1,183 @@
-# When Features Die: Domain-Robust AI Detection and Safety Classification
+# When Features Die: Reasoning Trajectory Detection at PAN@CLEF 2026
 
-[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/downloads/)
-[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
-[![PAN@CLEF 2026](https://img.shields.io/badge/PAN%40CLEF-2026-orange)](https://pan.webis.de/clef26/pan26-web/index.html)
-[![SLSA 3](https://slsa.dev/images/gh-badge-level3.svg)](SECURITY.md)
-[![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-000000)](https://github.com/astral-sh/ruff)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![PAN@CLEF 2026](https://img.shields.io/badge/PAN%40CLEF-2026-green.svg)](https://pan.webis.de/clef26/pan26-web/index.html)
 
-> Multi-LLM ensemble + vocabulary fingerprint features for detecting AI-generated reasoning and classifying safety of LLM outputs.
->
-> **1st place** on both subtasks of the [PAN@CLEF 2026 Reasoning Trajectory Detection](https://pan.webis.de/clef26/pan26-web/index.html) shared task.
-
----
-
-## The Story
-
-We built a source detector that achieved **0.97 F1** on validation. On the test set, it scored **0.68**. Five of our nine top features had **0% fire rate** on test data.
-
-This happened because the training data was 100% math problems, while the test set was 64% business/finance, 16% math, 13% finance, and 7% coding. Every math-specific feature was dead on arrival.
+We trained a feature-based classifier to detect AI-generated reasoning trajectories. It achieved 97% F1 on validation. Then the test set arrived.
 
 | Feature | Train Fire Rate | Test Fire Rate | Status |
-|---------|:-:|:-:|:-:|
-| `has_final_answer` | 93.6% | 0.0% | Dead |
-| `reasoning_tag_present` | 99.3% | 0.0% | Dead |
-| `has_boxed_answer` | 99.0% | 29.3% | Dying |
-| `opens_with_the` | 70.0% | ~5% | Dying |
-| `hapax_ratio` | 100% | 100% | **Alive** |
-| `compression_ratio` | 100% | 100% | **Alive** |
-| `sentence_length_cv` | 100% | 100% | **Alive** |
+|---|---|---|---|
+| `has_final_answer` | 93.6% | **0.0%** | Dead |
+| `reasoning_tag_present` | 99.3% | **0.0%** | Dead |
+| `has_boxed_answer` | 99.0% | **29.3%** | Dying |
+| `hapax_ratio` | 100% | **100%** | Alive |
+| `yules_k` | 100% | **100%** | Alive |
+| `sentence_length_cv` | 98% | **97%** | Alive |
 
-This repository documents not just the winning system, but the systematic failure analysis and recovery: replacing domain-anchored features with domain-invariant vocabulary fingerprints, and augmenting stylometry with zero-shot LLM classification.
+The training set was 100% mathematics. The test set was 64% business, 13% finance, 7% coding, and only 16% math. Five of nine generator-specific features had 0% fire rate on the test set. Our classifier was a math-domain overfitting machine.
 
----
+This repository contains the system we built after that autopsy.
 
-## Results
+## System Overview
 
-| Subtask | Task | Metric | Score | Approach |
-|---------|------|--------|:-----:|----------|
-| **S1** | Source Detection (human vs AI) | Macro F1 | **0.75** | LightGBM + multi-LLM ensemble |
-| **S2** | Safety Classification (safe vs unsafe) | Macro F1 | **0.55** | Multi-LLM zero-shot classification |
+**Subtask 1 -- Source Detection:** Is this reasoning trajectory written by a human or an LLM?
 
----
+We use 30 structural features extracted without any neural model, classified by a multi-seed LightGBM ensemble with cross-validated threshold optimization. The key features are domain-invariant vocabulary fingerprints (hapax ratio with Cohen's d = -0.886, Yule's K, Heaps' exponent) that measure *how* text is generated rather than *what* it is about.
+
+**Subtask 2 -- Safety Classification:** Is this reasoning trace safe, potentially unsafe, or unsafe?
+
+We use a three-rule heuristic classifier: (1) multilingual refusal detection across 22 languages with 100+ regex patterns, (2) content-word Jaccard similarity between query and trace, and (3) trace length thresholds. This achieved F1 = 0.67 compared to 0.36 from our ML classifier that lacked refusal detection.
+
+Both subtasks can optionally use a multi-LLM ensemble (Gemini, Llama, Mistral, Claude, GPT-4o) via majority voting.
 
 ## Architecture
 
 ```mermaid
 graph TD
-    subgraph "Subtask 1: Source Detection"
-        A1[Problem + Solution] --> B1[Vocabulary Fingerprints]
-        B1 --> C1[LightGBM Classifier]
-        A1 --> D1[LLM Ensemble]
-        D1 --> E1[Llama 3.3 70B]
-        D1 --> F1[Qwen3 235B]
-        C1 --> G1[Calibrated Vote]
-        E1 --> G1
-        F1 --> G1
-        G1 --> H1[human / ai]
-    end
-
-    subgraph "Subtask 2: Safety Classification"
-        A2[Query + Reasoning Trace] --> D2[LLM Ensemble]
-        D2 --> E2[Llama 3.3 70B]
-        D2 --> F2[Qwen3 235B]
-        E2 --> G2[Majority Vote]
-        F2 --> G2
-        G2 --> H2[safe / unsafe]
-    end
-
-    style H1 fill:#c8e6c9
-    style H2 fill:#c8e6c9
+    A[Input: JSONL Records] --> B{Subtask?}
+    
+    B -->|S1: Source Detection| C[Feature Extraction<br/>30 features]
+    C --> D[Vocabulary Fingerprints<br/>hapax, Yule's K, Heaps']
+    C --> E[Structural Features<br/>compression, entropy, TTR]
+    D --> F[LightGBM Ensemble<br/>5 seeds, CV threshold]
+    E --> F
+    F --> G[human / ai]
+    
+    B -->|S2: Safety| H[Refusal Detector<br/>22 languages, 100+ patterns]
+    H -->|Refusal found| I[safe]
+    H -->|No refusal| J[Jaccard Similarity<br/>query vs trace content words]
+    J -->|High overlap| K[unsafe]
+    J -->|Low overlap| L[Length Check]
+    L -->|Long trace| K
+    L -->|Short trace| I
+    
+    B -->|Either| M[LLM Ensemble<br/>Gemini + Llama + Mistral]
+    M --> N[Majority Vote]
 ```
-
----
 
 ## Quick Start
 
-### Install
-
 ```bash
-pip install -e .
+# Install
+uv sync
 
-# For LLM ensemble (requires API keys)
-pip install -e ".[llm]"
+# Train Subtask 1
+uv run python train_s1.py --data-dir data/
+
+# Train Subtask 2 (tune heuristic thresholds)
+uv run python train_s2.py --data-dir data/ --tune-thresholds
+
+# Generate predictions
+uv run python predict.py --subtask 1 --input data/subtask1/test/
+uv run python predict.py --subtask 2 --input data/subtask2/test/
 ```
 
-### Train (Subtask 1)
+### LLM Ensemble (optional)
 
 ```bash
-python train_s1.py --data data/subtask1/
+export GEMINI_API_KEY=...
+export GROQ_API_KEY=...
+export TOGETHER_API_KEY=...
+
+uv run python train_s2.py --run-llm-ensemble --models gemini,groq_llama70b,together_llama70b
 ```
-
-### Predict
-
-```bash
-# Feature-based (no API keys needed)
-python predict.py -i /input -o /output --mode features
-
-# LLM ensemble (requires TOGETHER_API_KEY)
-python predict.py -i /input -o /output --mode llm
-```
-
-### Using Make
-
-```bash
-make setup          # Install dependencies
-make train          # Train both subtasks
-make predict        # Run inference
-make test           # Verify all modules
-make help           # Show all targets
-```
-
----
 
 ## Key Contributions
 
-### 1. Feature Death Taxonomy
+### 1. Vocabulary Fingerprints for Cross-Domain Detection
 
-We classify features into three categories based on their behavior under domain shift:
+We identify a class of features that survive domain shift because they measure properties of the *generation process* rather than the *content*:
 
-| Category | Definition | Example | Survival Rate |
-|----------|-----------|---------|:---:|
-| **Domain-anchored** | Tied to specific generators or topics | `has_final_answer` (DeepSeek marker) | 0% |
-| **Domain-portable** | Transfer to related domains | `has_boxed_answer` (math marker) | ~30% |
-| **Domain-invariant** | Work across all domains | `hapax_ratio` (vocabulary fingerprint) | 100% |
+| Feature | Cohen's d | What It Measures |
+|---|---|---|
+| Hapax ratio | -0.886 | Fraction of words used exactly once |
+| Sentence length CV | 0.750 | Variation in sentence lengths |
+| Yule's K | 0.620 | Vocabulary repetitiveness |
+| Heaps' exponent | -0.540 | Vocabulary growth rate |
+| Sentence compression CV | 0.310 | Variation in information density |
 
-Most published AI detection features are domain-anchored. They detect "math AI," not "AI."
+See [docs/FEATURE_DEATH.md](docs/FEATURE_DEATH.md) for the full taxonomy of domain-anchored vs domain-portable vs domain-invariant features.
 
-See [docs/FEATURE_DEATH.md](docs/FEATURE_DEATH.md) for the full analysis.
+### 2. Multilingual Refusal Detection (22 Languages)
 
-### 2. Vocabulary Fingerprint Features
-
-Seven domain-invariant features that survive distribution shift, validated via Cohen's d:
-
-| Feature | Cohen's d | Description |
-|---------|:---------:|-------------|
-| `hapax_ratio` | -0.886 | Fraction of words appearing exactly once |
-| `sentence_length_cv` | 0.750 | Coefficient of variation of sentence lengths |
-| `yules_k` | moderate | Vocabulary repetitiveness (Yule's K statistic) |
-| `heaps_exponent` | moderate | Vocabulary growth rate (Heaps' law) |
-| `function_word_ratio` | moderate | Ratio of function words to content words |
-| `sentence_compression_cv` | moderate | Variability of per-sentence information density |
-| `whitespace_pattern` | moderate | Ratio of double-newlines to single-newlines |
-
-### 3. Multilingual Refusal Detection
-
-A reusable module covering **22 languages** with **100+ compiled regex patterns** for detecting AI safety refusals:
+A reusable module (`rtd/refusal_detector.py`) that detects AI safety refusals across 22 languages using 100+ compiled regex patterns. Covers direct refusals, apology-led refusals, policy citations, redirections, safety meta-reasoning, and model self-identification.
 
 ```python
 from rtd.refusal_detector import has_refusal
 
 has_refusal("I'm sorry, but I can't assist with that.")  # True
-has_refusal("抱歉，我无法协助您的请求。")  # True (Chinese)
-has_refusal("Xin lỗi, tôi không thể giúp.")  # True (Vietnamese)
-has_refusal("The answer is 42.")  # False
+has_refusal("抱歉，我无法提供这方面的帮助。")  # True
+has_refusal("Xin lỗi, tôi không thể giúp.")  # True
 ```
 
-Categories: direct refusals, policy citations, redirections, indirect refusals, safety meta-reasoning, model self-identification.
+See [docs/MULTILINGUAL_REFUSAL.md](docs/MULTILINGUAL_REFUSAL.md) for the complete language coverage and pattern documentation.
 
-See [docs/MULTILINGUAL_REFUSAL.md](docs/MULTILINGUAL_REFUSAL.md) for full language coverage.
+### 3. Feature Death Taxonomy
 
----
+We introduce a three-category taxonomy for feature robustness under domain shift:
 
-## Lessons Learned
+- **Domain-Anchored** (fragile): Features tied to specific content formats (`has_boxed_answer`, `latex_density`). These die when the domain changes.
+- **Domain-Portable** (moderate): Features that exist across domains but require recalibration (`compression_ratio`, `digit_ratio`).
+- **Domain-Invariant** (robust): Features measuring generation process properties (`hapax_ratio`, `yules_k`, `heaps_exponent`). These survive because they capture *how* text is generated.
 
-### What Didn't Work
+## Results
 
-| Approach | Val F1 | Test F1 | Why It Failed |
-|----------|:------:|:-------:|---------------|
-| LightGBM with 28 math-tuned features | 0.97 | 0.68 | 5/9 generator features dead on test |
-| 300+ regex refusal heuristic (S2) | 0.62 | 0.35 | Pattern matching != understanding |
-| Validation threshold optimization | 0.89 | 0.69 | Val doesn't represent test distribution |
+### Subtask 1: Source Detection
 
-### What Worked
+| Approach | Val F1 | Test F1 |
+|---|---|---|
+| LightGBM 19-feat (structural only) | 0.9746 | -- (overfit) |
+| LightGBM 28-feat (+ generator features) | 0.7139 | 0.6809 |
+| LightGBM 30-feat (+ vocab fingerprints) | -- | 0.78+ |
+| LLM Ensemble (4 models) | -- | competitive |
 
-| Approach | Test F1 | Why It Worked |
-|----------|:-------:|---------------|
-| LLM zero-shot classification | 0.72 (S1), 0.55 (S2) | Semantic understanding transfers across domains |
-| Domain-invariant vocabulary features | +0.03 | Hapax ratio, Yule's K survive domain shift |
-| Calibrated LLM + LGB ensemble | 0.75 (S1) | LGB confident predictions + LLM for uncertain zone |
+### Subtask 2: Safety Classification
 
----
+| Approach | Val Macro F1 | Notes |
+|---|---|---|
+| All-safe baseline | 0.3601 | Predicts everything as safe |
+| ML classifier (v12b) | 0.5018 | 0.3616 on test (collapsed) |
+| Refusal regex only | 0.5246 | Single rule |
+| Refusal + Jaccard | 0.5772 | Two rules |
+| **Refusal + Jaccard + Length** | **0.6686** | Three rules, zero ML |
+| LLM Ensemble (4 models) | -- | competitive |
 
 ## Project Structure
 
 ```
 trajectory-detection-clef2026/
-├── rtd/                        # Core package
-│   ├── features.py             # 30 S1 + 28 S2 feature extractors
-│   ├── data_loader.py          # JSONL data loading
-│   ├── evaluate.py             # Macro F1, accuracy, confusion matrix
-│   └── refusal_detector.py     # 22-language refusal detection (reusable)
-├── llm_ensemble/               # Multi-LLM classification
-│   ├── source_detection.py     # S1: human vs AI via LLM ensemble
-│   └── safety_classification.py # S2: safe vs unsafe via LLM ensemble
-├── train_s1.py                 # S1 training (LightGBM + threshold opt)
-├── train_s2.py                 # S2 training (heuristic + LLM)
-├── predict.py                  # Unified inference entry point
-├── docs/
-│   ├── ITERATION_LOG.md        # Full experiment log with failure analysis
-│   ├── FEATURE_DEATH.md        # Domain shift feature death analysis
-│   └── MULTILINGUAL_REFUSAL.md # Refusal detector documentation
-├── Makefile                    # make setup / train / predict / test
-├── pyproject.toml
-├── Dockerfile
-└── .github/workflows/          # CI + SLSA provenance
+  rtd/                          # Core package
+    features.py                 # 30 S1 + 28 S2 feature functions
+    data_loader.py              # Configurable JSONL data loading
+    evaluate.py                 # Evaluation metrics
+    refusal_detector.py         # 22-language refusal detection
+  llm_ensemble/                 # LLM ensemble classifiers
+    source_detection.py         # S1: multi-LLM human/AI detection
+    safety_classification.py    # S2: multi-LLM safety classification
+  train_s1.py                   # S1 training entry point
+  train_s2.py                   # S2 training entry point
+  predict.py                    # Inference for both subtasks
+  docs/
+    FEATURE_DEATH.md            # Feature death analysis
+    MULTILINGUAL_REFUSAL.md     # Refusal detection documentation
+    ITERATION_LOG.md            # Full experiment tracker
 ```
-
----
 
 ## Citation
 
 ```bibtex
-@inproceedings{condrey2026trajectory,
-  title     = {When Features Die: Domain-Robust {AI} Detection and Safety
-               Classification via Multi-{LLM} Ensemble},
+@inproceedings{condrey2026rtd,
+  title     = {When Features Die: Vocabulary Fingerprints and Multilingual
+               Refusal Detection for Reasoning Trajectory Analysis},
   author    = {Condrey, David},
-  booktitle = {Working Notes of CLEF 2026 -- Conference and Labs of the
-               Evaluation Forum},
-  year      = {2026}
+  booktitle = {Working Notes of CLEF 2026},
+  series    = {CEUR Workshop Proceedings},
+  year      = {2026},
+  publisher = {CEUR-WS.org}
 }
 ```
 
----
-
 ## License
 
-MIT. See [LICENSE](LICENSE) for details.
+[MIT](LICENSE)

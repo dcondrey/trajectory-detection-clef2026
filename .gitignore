@@ -1,3 +1,4 @@
+# Python
 __pycache__/
 *.py[cod]
 *$py.class
@@ -5,22 +6,33 @@ __pycache__/
 dist/
 build/
 *.egg
-.eggs/
 
-# Models and data (too large for git)
-models/
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Cache and models
 cache/
-data/
+models/
 *.npy
 *.pkl
 *.joblib
-*.onnx
+
+# Data (large files)
+data/
+
+# Submissions
+submissions/
+codabench_submissions/
+*.zip
 
 # IDE
 .vscode/
 .idea/
 *.swp
 *.swo
+*~
 
 # OS
 .DS_Store
@@ -28,16 +40,7 @@ Thumbs.db
 
 # Environment
 .env
-.venv/
-venv/
+.env.local
 
-# Results and submissions
-predictions/
-submissions/
-codabench_submissions/
-catboost_info/
-
-# Misc
-*.log
-.mypy_cache/
-.ruff_cache/
+# Jupyter
+.ipynb_checkpoints/
