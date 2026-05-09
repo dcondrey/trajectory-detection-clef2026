@@ -1,0 +1,43 @@
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+*.egg
+.eggs/
+
+# Models and data (too large for git)
+models/
+cache/
+data/
+*.npy
+*.pkl
+*.joblib
+*.onnx
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.venv/
+venv/
+
+# Results and submissions
+predictions/
+submissions/
+codabench_submissions/
+catboost_info/
+
+# Misc
+*.log
+.mypy_cache/
+.ruff_cache/

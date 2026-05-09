@@ -1,0 +1,25 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "Reasoning Trajectory Detection: Domain-Robust AI Source Detection and Safety Classification"
+authors:
+  - family-names: "Condrey"
+    given-names: "David"
+type: software
+license: MIT
+repository-code: "https://github.com/davidcondrey/trajectory-detection-clef2026"
+keywords:
+  - AI detection
+  - safety classification
+  - domain shift
+  - LLM ensemble
+  - PAN CLEF 2026
+  - reasoning traces
+  - multilingual refusal detection
+preferred-citation:
+  type: conference-paper
+  title: "When Features Die: Domain-Robust AI Detection and Safety Classification via Multi-LLM Ensemble"
+  authors:
+    - family-names: "Condrey"
+      given-names: "David"
+  collection-title: "Working Notes of CLEF 2026 -- Conference and Labs of the Evaluation Forum"
+  year: 2026
