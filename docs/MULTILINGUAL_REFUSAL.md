@@ -14,19 +14,19 @@ The system covers **22 languages** with **100+ compiled regex patterns** and **4
 | 2 | Chinese (Simplified) | Han | 8+ | "抱歉，我无法提供这方面的帮助。" |
 | 3 | Chinese (Traditional) | Han | 6+ | "抱歉，我無法協助您的請求。" |
 | 4 | German | Latin | 5 | "Tut mir leid, ich kann Ihnen dabei nicht helfen." |
-| 5 | French | Latin | 5 | "Desolé, je ne peux pas vous aider avec cette demande." |
+| 5 | French | Latin | 5 | "Désolé, je ne peux pas vous aider avec cette demande." |
 | 6 | Spanish | Latin | 6 | "Lo siento, no puedo ayudar con esa solicitud." |
 | 7 | Russian | Cyrillic | 5 | "Извините, я не могу помочь с этим запросом." |
-| 8 | Vietnamese | Latin (diacritics) | 4 | "Xin loi, toi khong the giup voi yeu cau nay." |
+| 8 | Vietnamese | Latin (diacritics) | 4 | "Xin lỗi, tôi không thể giúp với yêu cầu này." |
 | 9 | Korean | Hangul | 4 | "죄송합니다, 도움을 드릴 수 없습니다." |
 | 10 | Japanese | Kana + Kanji | 5 | "申し訳ございませんが、お手伝いできません。" |
 | 11 | Italian | Latin | 3 | "Mi dispiace, non posso aiutare." |
 | 12 | Polish | Latin | 3 | "Przepraszam, nie mogę pomóc." |
 | 13 | Arabic | Arabic | 3 | "آسف، لا أستطيع المساعدة." |
 | 14 | Portuguese | Latin | 3 | "Desculpe, não posso ajudar." |
-| 15 | Romanian | Latin | 2 | "Imi pare rau, nu pot ajuta." |
+| 15 | Romanian | Latin | 2 | "Îmi pare rău, nu pot ajuta." |
 | 16 | Hindi | Devanagari | 2 | "क्षमा करें, मैं मदद नहीं कर सकता।" |
-| 17 | Turkish | Latin | 3 | "Üzgünüm, yardimci olamam." |
+| 17 | Turkish | Latin | 3 | "Üzgünüm, yardımcı olamam." |
 | 18 | Thai | Thai | 2 | "ขอโทษ ไม่สามารถช่วยได้" |
 | 19 | Indonesian/Malay | Latin | 2 | "Maaf, saya tidak bisa membantu." |
 | 20 | Czech | Latin | 2 | "Omlouvám se, nemohu pomoci." |

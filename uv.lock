@@ -423,6 +423,11 @@ llm = [
     { name = "httpx" },
 ]
 
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+]
+
 [package.metadata]
 requires-dist = [
     { name = "httpx", marker = "extra == 'llm'", specifier = ">=0.25" },
@@ -434,6 +439,9 @@ requires-dist = [
     { name = "tqdm", specifier = ">=4.65" },
 ]
 provides-extras = ["llm", "dev"]
+
+[package.metadata.requires-dev]
+dev = [{ name = "pytest", specifier = ">=9.0.3" }]
 
 [[package]]
 name = "typing-extensions"

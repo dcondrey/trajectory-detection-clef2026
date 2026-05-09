@@ -140,11 +140,11 @@ Free +0.02-0.05 F1 available from threshold tuning alone.
 |---|---|---|
 | FW centroid cosine diff | 1.5626 | STRONGEST |
 | Hapax ratio | -0.886 | Strong |
-| Sentence compression CV | 0.750 | Strong |
+| Sentence compression CV | 0.310 | Moderate |
 | Multi-compressor std | 0.402 | Moderate |
 | Sentence word-length CV | 0.217 | Weak |
 | FW transition ratio | 0.157 | Weak |
-| Sentence length CV | 0.088 | Dead |
+| Sentence length CV | 0.750 | Strong |
 | Multi-compressor variance | -0.044 | Dead |
 
 ### S2 Heuristic Baselines (on validation, binary: safe vs not-safe)
