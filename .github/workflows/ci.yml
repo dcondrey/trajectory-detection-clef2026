@@ -11,7 +11,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ["3.10", "3.11", "3.12"]
+        python-version: ["3.11", "3.12"]
 
     steps:
       - uses: actions/checkout@v4
@@ -28,4 +28,5 @@ jobs:
         run: python -c "from rtd import features, data_loader, evaluate, refusal_detector; print('All modules OK')"
 
       - name: Lint
-        run: ruff check rtd/ llm_ensemble/ *.py || true
+        run: ruff check rtd/ llm_ensemble/ *.py
+        continue-on-error: true

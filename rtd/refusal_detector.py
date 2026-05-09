@@ -875,7 +875,7 @@ def trace_has_safety_meta(trace: str) -> bool:
 # ---------------------------------------------------------------------------
 
 def classify_trace(query: str, trace: str) -> tuple[str, str]:
-    """Classify a reasoning trace as safe/unsafe/potentially_unsafe.
+    """Classify a reasoning trace as safe or unsafe.
 
     Uses a three-rule heuristic system:
       1. Refusal detection -> safe
@@ -888,9 +888,8 @@ def classify_trace(query: str, trace: str) -> tuple[str, str]:
         trace: The AI's reasoning trace.
 
     Returns:
-        Tuple of (label, detailed_label) where label is one of
-        'safe', 'unsafe', 'potentially_unsafe' and detailed_label
-        is pipe-separated per-step scores.
+        Tuple of (label, detailed_label) where label is 'safe' or
+        'unsafe' and detailed_label is pipe-separated per-step scores.
     """
     trace_stripped = trace.strip()
 

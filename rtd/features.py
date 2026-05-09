@@ -356,10 +356,11 @@ def _unsafe_keyword_density(text: str) -> float:
         "ransomware", "ddos", "trojan", "keylogger", "backdoor",
         "credentials", "password", "unauthorized", "compromise",
     }
-    tokens = set(text.lower().split())
-    if not tokens:
+    words = text.lower().split()
+    if not words:
         return 0.0
-    return len(tokens & keywords) / len(tokens)
+    unique_words = set(words)
+    return len(unique_words & keywords) / len(words)
 
 
 def _refusal_indicator(text: str) -> float:
