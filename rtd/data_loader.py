@@ -1,11 +1,7 @@
-"""Data loading and preprocessing for PAN@CLEF 2026 Reasoning Trajectory Detection.
-
-Supports configurable data directories and both subtask formats.
-"""
+"""Data loading and preprocessing for PAN-CLEF 2026 Reasoning Trajectory Detection."""
 
 import json
 import logging
-import re
 from pathlib import Path
 from typing import Optional
 
@@ -13,26 +9,17 @@ import numpy as np
 
 log = logging.getLogger(__name__)
 
-# Default data directory; override via load functions' data_dir parameter
-DEFAULT_DATA_DIR = Path(__file__).resolve().parent.parent / "data"
+DATA_DIR = Path(__file__).parent.parent / "data"
 
 
 def load_jsonl(path: Path) -> list[dict]:
-    """Load a JSONL file into a list of dicts.
-
-    Args:
-        path: Path to a .jsonl file.
-
-    Returns:
-        List of parsed JSON objects.
-    """
+    """Load a JSONL file into a list of dicts."""
     records = []
     with open(path, "r", encoding="utf-8") as f:
         for line in f:
             line = line.strip()
             if line:
                 records.append(json.loads(line))
-    log.debug("Loaded %d records from %s", len(records), path)
     return records
 
 
@@ -40,61 +27,42 @@ def load_jsonl(path: Path) -> list[dict]:
 # Subtask 1: Source Detection
 # ---------------------------------------------------------------------------
 
-def load_subtask1(split: str = "train",
-                  data_dir: Optional[Path] = None) -> list[dict]:
-    """Load subtask 1 data for a given split.
+def load_subtask1(split: str = "train") -> list[dict]:
+    """Load all subtask1 data for a given split.
 
-    Each record has: problem_id, solution_id, problem, solution,
-    generator, detailed_generator. A binary label is added:
-    0 = human, 1 = llm.
-
-    Args:
-        split: One of 'train', 'validation', 'test'.
-        data_dir: Override default data directory.
-
-    Returns:
-        List of record dicts with 'label' field added.
+    Each record has: problem_id, solution_id, problem, solution, generator, detailed_generator.
+    We add a binary label: 0 = human, 1 = llm.
     """
-    base = (data_dir or DEFAULT_DATA_DIR) / "subtask1"
-
     if split == "test":
-        folder = base / "test"
+        folder = DATA_DIR / "subtask1" / "test"
         all_records = []
         for f in sorted(folder.glob("*.jsonl")):
             all_records.extend(load_jsonl(f))
         return all_records
 
     if split == "train":
-        folder = base / "train"
+        folder = DATA_DIR / "subtask1" / "train"
         prefix = "train_"
     else:
-        folder = base / "validation"
+        folder = DATA_DIR / "subtask1" / "validation"
         prefix = "valid_"
 
     all_records = []
     for f in sorted(folder.glob(f"{prefix}*.jsonl")):
-        all_records.extend(load_jsonl(f))
+        records = load_jsonl(f)
+        all_records.extend(records)
 
+    # Add binary label
     for r in all_records:
         r["label"] = 0 if r["generator"] == "human" else 1
 
-    log.info("Loaded %d subtask1 %s records", len(all_records), split)
     return all_records
 
 
-def load_subtask1_by_generator(split: str = "train",
-                               data_dir: Optional[Path] = None) -> dict[str, list[dict]]:
-    """Load subtask 1 data grouped by generator.
-
-    Args:
-        split: One of 'train', 'validation', 'test'.
-        data_dir: Override default data directory.
-
-    Returns:
-        Dict mapping generator name to list of records.
-    """
-    records = load_subtask1(split, data_dir)
-    by_gen: dict[str, list[dict]] = {}
+def load_subtask1_by_generator(split: str = "train") -> dict[str, list[dict]]:
+    """Load subtask1 data grouped by generator."""
+    records = load_subtask1(split)
+    by_gen = {}
     for r in records:
         gen = r["detailed_generator"]
         by_gen.setdefault(gen, []).append(r)
@@ -114,46 +82,36 @@ SAFETY_LABEL_MAP = {
 }
 
 
-def load_subtask2(split: str = "train",
-                  data_dir: Optional[Path] = None) -> list[dict]:
-    """Load subtask 2 data for a given split.
+def load_subtask2(split: str = "train") -> list[dict]:
+    """Load all subtask2 data for a given split.
 
-    Each record has: id, query, generator, reasoning_trace, label,
-    detailed_label. Label is mapped to int: safe=0,
-    potentially_unsafe=1, unsafe=2.
-
-    Args:
-        split: One of 'train', 'validation', 'test'.
-        data_dir: Override default data directory.
-
-    Returns:
-        List of record dicts with 'label_int' field added.
+    Each record has: id, query, generator, reasoning_trace, label, detailed_label.
+    We map label to int: safe=0, potentially_unsafe=1, unsafe=2.
     """
-    base = (data_dir or DEFAULT_DATA_DIR) / "subtask2"
-
     if split == "test":
-        folder = base / "test"
+        folder = DATA_DIR / "subtask2" / "test"
         all_records = []
         for f in sorted(folder.glob("*.jsonl")):
             all_records.extend(load_jsonl(f))
         return all_records
 
     if split == "train":
-        folder = base / "train"
+        folder = DATA_DIR / "subtask2" / "train"
         prefix = "train_"
     else:
-        folder = base / "validation"
+        folder = DATA_DIR / "subtask2" / "validation"
         prefix = "valid_"
 
     all_records = []
     for f in sorted(folder.glob(f"{prefix}*.jsonl")):
-        all_records.extend(load_jsonl(f))
+        records = load_jsonl(f)
+        all_records.extend(records)
 
+    # Map string label to int
     for r in all_records:
         raw_label = r["label"].strip().lower()
         r["label_int"] = SAFETY_LABEL_MAP.get(raw_label, 1)
 
-    log.info("Loaded %d subtask2 %s records", len(all_records), split)
     return all_records
 
 
@@ -161,13 +119,47 @@ def parse_reasoning_steps(trace: str) -> list[str]:
     """Parse a reasoning trace into individual steps.
 
     Steps are delimited by 'Step N:' markers.
-
-    Args:
-        trace: Raw reasoning trace text.
-
-    Returns:
-        List of step text strings.
     """
+    import re
     parts = re.split(r"Step \d+:\s*", trace)
     steps = [p.strip() for p in parts if p.strip()]
     return steps
+
+
+# ---------------------------------------------------------------------------
+# Summary stats
+# ---------------------------------------------------------------------------
+
+def print_subtask1_stats(split: str = "train"):
+    records = load_subtask1(split)
+    log.info("\n=== Subtask 1 (%s) ===", split)
+    log.info("Total samples: %d", len(records))
+    from collections import Counter
+    gen_counts = Counter(r["detailed_generator"] for r in records)
+    label_counts = Counter(r["generator"] for r in records)
+    log.info("Labels: %s", dict(label_counts))
+    log.info("Generators: %s", dict(gen_counts))
+    sol_lens = [len(r["solution"].split()) for r in records]
+    log.info("Solution length (words): min=%d, median=%d, max=%d", min(sol_lens), int(np.median(sol_lens)), max(sol_lens))
+
+
+def print_subtask2_stats(split: str = "train"):
+    records = load_subtask2(split)
+    log.info("\n=== Subtask 2 (%s) ===", split)
+    log.info("Total samples: %d", len(records))
+    from collections import Counter
+    label_counts = Counter(r["label"] for r in records)
+    log.info("Labels: %s", dict(label_counts))
+    gen_counts = Counter(r["generator"] for r in records)
+    log.info("Generators: %s", dict(gen_counts))
+    step_counts = [len(r["detailed_label"]) for r in records]
+    log.info("Steps per trace: min=%d, median=%d, max=%d", min(step_counts), int(np.median(step_counts)), max(step_counts))
+    all_step_labels = [l for r in records for l in r["detailed_label"]]
+    log.info("Step labels: safe=%d, unsafe=%d", all_step_labels.count(0), all_step_labels.count(1))
+
+
+if __name__ == "__main__":
+    print_subtask1_stats("train")
+    print_subtask1_stats("validation")
+    print_subtask2_stats("train")
+    print_subtask2_stats("validation")

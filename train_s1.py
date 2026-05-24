@@ -1,18 +1,15 @@
-"""Subtask 1: Source Detection training with vocabulary fingerprint features.
+"""Subtask 1 v2: Source Detection with improved features + threshold optimization.
 
-Trains a multi-seed LightGBM ensemble with cross-validated threshold
-optimization. Key insight: domain-anchored features (LaTeX, boxed answers)
-die under distribution shift. Domain-invariant vocabulary fingerprints
-(hapax ratio, Yule's K, Heaps' exponent) survive.
-
-Usage:
-    uv run python train_s1.py --data-dir data/ --output-dir models/
-    uv run python train_s1.py --seeds 42,123,456 --n-folds 5
+Changes from v1:
+  - Removed 5 dead generator features (0% fire rate on test)
+  - Added 7 domain-agnostic vocabulary fingerprint features
+  - Threshold optimization via stratified k-fold CV
+  - Multi-seed ensemble for robustness
 """
 
-import argparse
 import json
 import logging
+import sys
 from pathlib import Path
 
 import lightgbm as lgb
@@ -20,26 +17,33 @@ import numpy as np
 from sklearn.metrics import f1_score
 from sklearn.model_selection import StratifiedKFold
 
-from rtd.data_loader import load_subtask1
-from rtd.evaluate import evaluate_binary
-from rtd.features import SUBTASK1_FEATURE_NAMES, extract_subtask1_features
+sys.path.insert(0, str(Path(__file__).parent))
+
+from data_loader import load_subtask1
+from evaluate import evaluate_binary
+from features import SUBTASK1_FEATURE_NAMES, extract_subtask1_features
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 log = logging.getLogger(__name__)
 
+CACHE_DIR = Path(__file__).parent.parent / "cache"
+MODEL_DIR = Path(__file__).parent.parent / "models"
+CACHE_DIR.mkdir(exist_ok=True)
+MODEL_DIR.mkdir(exist_ok=True)
 
-def load_features(split: str, cache_dir: Path,
-                  data_dir: Path | None = None) -> tuple[np.ndarray, np.ndarray]:
-    """Load or extract and cache features for a split."""
-    feat_path = cache_dir / f"s1_{split}_features.npy"
-    label_path = cache_dir / f"s1_{split}_labels.npy"
+FEATURE_NAMES = SUBTASK1_FEATURE_NAMES
+
+
+def load_features(split: str) -> tuple[np.ndarray, np.ndarray]:
+    feat_path = CACHE_DIR / f"s1_{split}_features_v2.npy"
+    label_path = CACHE_DIR / f"s1_{split}_labels_v2.npy"
 
     if feat_path.exists() and label_path.exists():
-        log.info("Loading cached %s features...", split)
+        log.info("Loading cached %s features (v2)...", split)
         return np.load(feat_path), np.load(label_path)
 
-    log.info("Extracting %s features...", split)
-    records = load_subtask1(split, data_dir)
+    log.info("Extracting %s features (v2)...", split)
+    records = load_subtask1(split)
     X = extract_subtask1_features(records)
     y = np.array([r["label"] for r in records], dtype=np.int32)
 
@@ -50,7 +54,6 @@ def load_features(split: str, cache_dir: Path,
 
 
 def train_lgb(X_train, y_train, X_val, y_val, seed=42):
-    """Train a single LightGBM model."""
     params = {
         "objective": "binary",
         "metric": "binary_logloss",
@@ -68,8 +71,8 @@ def train_lgb(X_train, y_train, X_val, y_val, seed=42):
         "n_jobs": -1,
     }
 
-    train_set = lgb.Dataset(X_train, label=y_train, feature_name=SUBTASK1_FEATURE_NAMES)
-    val_set = lgb.Dataset(X_val, label=y_val, feature_name=SUBTASK1_FEATURE_NAMES, reference=train_set)
+    train_set = lgb.Dataset(X_train, label=y_train, feature_name=FEATURE_NAMES)
+    val_set = lgb.Dataset(X_val, label=y_val, feature_name=FEATURE_NAMES, reference=train_set)
 
     model = lgb.train(
         params, train_set,
@@ -110,74 +113,66 @@ def cv_threshold(X, y, n_splits=5, seeds=None):
 
     oof_probs = all_oof_probs / np.maximum(all_oof_counts, 1)
     thresh, f1 = optimize_threshold(y, oof_probs)
-    log.info("  CV OOF threshold=%.3f, macro F1=%.4f", thresh, f1)
+    log.info("\n  CV OOF threshold=%.3f, macro F1=%.4f", thresh, f1)
     return thresh, oof_probs
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Train Subtask 1 source detection model")
-    parser.add_argument("--data-dir", type=Path, default=None,
-                        help="Data directory (default: data/)")
-    parser.add_argument("--output-dir", type=Path, default=Path("models"),
-                        help="Output directory for models")
-    parser.add_argument("--cache-dir", type=Path, default=Path("cache"),
-                        help="Cache directory for features")
-    parser.add_argument("--seeds", type=str, default="42,123,456,789,1024",
-                        help="Comma-separated random seeds")
-    parser.add_argument("--n-folds", type=int, default=5,
-                        help="Number of CV folds")
-    args = parser.parse_args()
-
-    args.output_dir.mkdir(parents=True, exist_ok=True)
-    args.cache_dir.mkdir(parents=True, exist_ok=True)
-    seeds = [int(s) for s in args.seeds.split(",")]
-
     log.info("=" * 60)
-    log.info("  SUBTASK 1: Source Detection Training")
+    log.info("  SUBTASK 1 v2: Improved Features + Threshold Optimization")
     log.info("=" * 60)
 
-    X_train, y_train = load_features("train", args.cache_dir, args.data_dir)
-    X_val, y_val = load_features("validation", args.cache_dir, args.data_dir)
+    X_train, y_train = load_features("train")
+    X_val, y_val = load_features("validation")
 
-    log.info("Train: %d samples, %d features", X_train.shape[0], X_train.shape[1])
+    log.info("\nTrain: %d samples, %d features", X_train.shape[0], X_train.shape[1])
     log.info("  Human: %d, LLM: %d", (y_train == 0).sum(), (y_train == 1).sum())
     log.info("Val:   %d samples", X_val.shape[0])
     log.info("  Human: %d, LLM: %d", (y_val == 0).sum(), (y_val == 1).sum())
 
-    # Cross-validated threshold optimization
+    # Step 1: CV threshold optimization on training data
     log.info("\n--- Cross-Validated Threshold Optimization ---")
-    cv_thresh, _ = cv_threshold(X_train, y_train, n_splits=args.n_folds, seeds=seeds)
+    cv_thresh, _ = cv_threshold(X_train, y_train, n_splits=5)
 
-    # Train multi-seed ensemble on full training data
+    # Step 2: Train multi-seed ensemble on full training data
+    seeds = [42, 123, 456, 789, 1024]
     models = []
     for seed in seeds:
         log.info("\n--- Training seed=%d ---", seed)
         model = train_lgb(X_train, y_train, X_val, y_val, seed=seed)
         models.append(model)
 
-    # Ensemble predictions on validation
+    # Step 3: Ensemble predictions on validation
     val_probs = np.mean([m.predict(X_val) for m in models], axis=0)
+
+    # Also optimize threshold on validation (for comparison)
     val_thresh, val_f1 = optimize_threshold(y_val, val_probs)
-    log.info("  Val-tuned threshold=%.3f, macro F1=%.4f", val_thresh, val_f1)
+    log.info("\n  Val-tuned threshold=%.3f, macro F1=%.4f", val_thresh, val_f1)
     log.info("  CV threshold=%.3f", cv_thresh)
 
+    # Use CV threshold (less overfit to validation)
     final_thresh = cv_thresh
     val_preds = (val_probs > final_thresh).astype(int)
 
     log.info("\n--- Final Results (threshold=%.3f) ---", final_thresh)
-    metrics = evaluate_binary(y_val, val_preds, title="S1 Validation Set")
+    metrics = evaluate_binary(y_val, val_preds, title="S1 v2 — Validation Set")
 
-    # Feature importance
+    # Also show with default 0.5 for comparison
+    val_preds_default = (val_probs > 0.5).astype(int)
+    f1_default = f1_score(y_val, val_preds_default, average="macro")
+    log.info("\n  (Comparison: default threshold=0.5 -> F1=%.4f)", f1_default)
+
+    # Feature importance (from first model)
     importance = models[0].feature_importance(importance_type="gain")
     indices = np.argsort(importance)[::-1]
     log.info("\nFeature Importances (gain):")
     for i, idx in enumerate(indices):
-        name = SUBTASK1_FEATURE_NAMES[idx] if idx < len(SUBTASK1_FEATURE_NAMES) else f"f{idx}"
+        name = FEATURE_NAMES[idx] if idx < len(FEATURE_NAMES) else f"f{idx}"
         log.info("  %2d. %-30s  %12.1f", i + 1, name, importance[idx])
 
     # Save models and config
     for i, model in enumerate(models):
-        model.save_model(str(args.output_dir / f"subtask1_seed{seeds[i]}.txt"))
+        model.save_model(str(MODEL_DIR / f"subtask1_v2_seed{seeds[i]}.txt"))
 
     config = {
         "threshold": float(final_thresh),
@@ -185,14 +180,14 @@ def main():
         "val_threshold": float(val_thresh),
         "seeds": seeds,
         "n_features": X_train.shape[1],
-        "feature_names": SUBTASK1_FEATURE_NAMES,
+        "feature_names": FEATURE_NAMES,
         "val_f1": float(metrics["f1_macro"]),
     }
-    with open(args.output_dir / "subtask1_config.json", "w") as f:
+    with open(MODEL_DIR / "subtask1_v2_config.json", "w") as f:
         json.dump(config, f, indent=2)
 
-    log.info("\nModels saved to %s/subtask1_seed*.txt", args.output_dir)
-    log.info("Config saved to %s/subtask1_config.json", args.output_dir)
+    log.info("\nModels saved to %s/subtask1_v2_seed*.txt", MODEL_DIR)
+    log.info("Config saved to %s/subtask1_v2_config.json", MODEL_DIR)
 
 
 if __name__ == "__main__":

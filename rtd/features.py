@@ -1,16 +1,9 @@
 """Feature engineering for Reasoning Trajectory Detection.
 
-Two feature sets:
-  - Subtask 1 (Source Detection): 30 structural + vocabulary fingerprint features
-  - Subtask 2 (Safety Detection): 28 trace-level + 22 per-step features
-
-Key insight: domain-anchored features (LaTeX density, boxed answers) die under
-domain shift. Domain-invariant vocabulary fingerprints (hapax ratio, Yule's K,
-Heaps' exponent) survive because they measure *how* text is generated, not
-*what* it is about.
+Adapted from the sensemaking CES pipeline — structural, compression, NLI,
+and embedding features for both subtasks.
 """
 
-import logging
 import math
 import re
 import string
@@ -20,15 +13,13 @@ from collections import Counter
 import numpy as np
 from tqdm import tqdm
 
-log = logging.getLogger(__name__)
-
 
 # ============================================================================
 # Structural / surface features (no model required)
 # ============================================================================
 
 def _vocab_richness(text: str) -> float:
-    """Type-token ratio: unique words / total words."""
+    """Type-token ratio."""
     tokens = text.lower().split()
     if not tokens:
         return 0.0
@@ -36,7 +27,6 @@ def _vocab_richness(text: str) -> float:
 
 
 def _avg_word_length(text: str) -> float:
-    """Mean character length per word."""
     tokens = text.split()
     if not tokens:
         return 0.0
@@ -44,21 +34,19 @@ def _avg_word_length(text: str) -> float:
 
 
 def _digit_ratio(text: str) -> float:
-    """Fraction of characters that are digits."""
     if not text:
         return 0.0
     return sum(c.isdigit() for c in text) / len(text)
 
 
 def _punct_ratio(text: str) -> float:
-    """Fraction of characters that are punctuation."""
     if not text:
         return 0.0
     return sum(c in string.punctuation for c in text) / len(text)
 
 
 def _latex_density(text: str) -> float:
-    r"""Fraction of text that is LaTeX markup (\\, $, {, }, ^, _)."""
+    """Fraction of text that is LaTeX markup (\\, $, {, })."""
     if not text:
         return 0.0
     latex_chars = sum(1 for c in text if c in r"\${}^_")
@@ -66,12 +54,11 @@ def _latex_density(text: str) -> float:
 
 
 def _sentence_count(text: str) -> int:
-    """Number of sentences (split on terminal punctuation)."""
     return len(re.split(r"[.!?]+", text.strip()))
 
 
 def _has_boxed_answer(text: str) -> int:
-    r"""Whether solution contains \\boxed{...} LaTeX answer format."""
+    """Whether solution contains \\boxed{...} LaTeX answer format."""
     return 1 if r"\boxed" in text else 0
 
 
@@ -81,7 +68,7 @@ def _step_marker_count(text: str) -> int:
 
 
 def _compression_ratio(text: str) -> float:
-    """zlib compression ratio. Lower values indicate more repetitive text."""
+    """zlib compression ratio — lower means more compressible/repetitive."""
     if not text:
         return 1.0
     raw = text.encode("utf-8")
@@ -90,7 +77,7 @@ def _compression_ratio(text: str) -> float:
 
 
 def _entropy(text: str) -> float:
-    """Character-level Shannon entropy in bits."""
+    """Character-level Shannon entropy."""
     if not text:
         return 0.0
     freq = Counter(text)
@@ -99,11 +86,11 @@ def _entropy(text: str) -> float:
 
 
 def _repetition_ratio(text: str) -> float:
-    """Fraction of repeated 4-grams. AI-generated text tends to repeat more."""
+    """Fraction of repeated n-grams (n=4 words) — AI tends to repeat more."""
     tokens = text.lower().split()
     if len(tokens) < 4:
         return 0.0
-    ngrams = [tuple(tokens[i:i + 4]) for i in range(len(tokens) - 3)]
+    ngrams = [tuple(tokens[i:i+4]) for i in range(len(tokens) - 3)]
     if not ngrams:
         return 0.0
     counts = Counter(ngrams)
@@ -116,7 +103,7 @@ def _repetition_ratio(text: str) -> float:
 # ============================================================================
 
 def _we_pronoun_frequency(text: str) -> float:
-    """Frequency of 'we/We' pronoun usage per word."""
+    """Frequency of 'we/We' pronoun usage."""
     tokens = text.split()
     if not tokens:
         return 0.0
@@ -130,7 +117,7 @@ def _numbered_step_count(text: str) -> int:
 
 
 def _thus_therefore_ratio(text: str) -> float:
-    """Ratio of 'thus' to 'therefore'. LLMs prefer 'thus'; humans prefer 'therefore'."""
+    """Ratio of 'thus' to 'therefore'. LLMs prefer 'thus', humans prefer 'therefore'."""
     thus_count = len(re.findall(r'\b[Tt]hus\b', text))
     therefore_count = len(re.findall(r'\b[Tt]herefore\b', text))
     total = thus_count + therefore_count
@@ -145,19 +132,14 @@ def _bold_section_count(text: str) -> int:
 
 
 def _solution_is_empty_or_minimal(text: str) -> int:
-    """Whether solution is empty or very short (<10 chars)."""
+    """Whether solution is empty or very short."""
     return 1 if len(text.strip()) < 10 else 0
 
 
 # --- Domain-agnostic vocabulary fingerprint features (Cohen's d validated) ---
 
 def _hapax_ratio(text: str) -> float:
-    """Fraction of words appearing exactly once (hapax legomena).
-
-    Cohen's d = -0.886 (human vs GPT-5-Nano). Humans produce more unique
-    words relative to vocabulary size because they draw from personal
-    experience and idiosyncratic knowledge.
-    """
+    """Fraction of words that appear exactly once (hapax legomena). d=-0.886."""
     tokens = text.lower().split()
     if len(tokens) < 2:
         return 0.0
@@ -167,11 +149,7 @@ def _hapax_ratio(text: str) -> float:
 
 
 def _yules_k(text: str) -> float:
-    """Yule's K measure of vocabulary richness.
-
-    Higher values indicate more repetitive word usage (LLM-like).
-    This measure is robust to text length, making it domain-portable.
-    """
+    """Yule's K measure of vocabulary richness. Higher = more repetitive (LLM-like)."""
     tokens = text.lower().split()
     n = len(tokens)
     if n < 2:
@@ -187,11 +165,7 @@ def _yules_k(text: str) -> float:
 
 
 def _heaps_exponent(text: str) -> float:
-    """Heaps' law exponent estimate.
-
-    Measures how quickly vocabulary grows with text length.
-    Lower values indicate more formulaic vocabulary growth (LLM-like).
-    """
+    """Heaps' law exponent estimate. Lower = more formulaic vocabulary growth."""
     tokens = text.lower().split()
     n = len(tokens)
     if n < 10:
@@ -201,11 +175,7 @@ def _heaps_exponent(text: str) -> float:
 
 
 def _sentence_length_cv(text: str) -> float:
-    """Coefficient of variation of sentence lengths.
-
-    Cohen's d = 0.750. Humans write with more variable sentence lengths
-    because their thought process is less uniform.
-    """
+    """Coefficient of variation of sentence lengths. d=0.750 (humans more variable)."""
     sentences = re.split(r'[.!?]+', text.strip())
     sentences = [s.strip() for s in sentences if s.strip()]
     if len(sentences) < 2:
@@ -214,7 +184,7 @@ def _sentence_length_cv(text: str) -> float:
     mean_len = sum(lens) / len(lens)
     if mean_len < 1:
         return 0.0
-    variance = sum((x - mean_len) ** 2 for x in lens) / len(lens)
+    variance = sum((l - mean_len) ** 2 for l in lens) / len(lens)
     return math.sqrt(variance) / mean_len
 
 
@@ -228,11 +198,7 @@ FUNCTION_WORDS = frozenset(
 
 
 def _function_word_ratio(text: str) -> float:
-    """Ratio of function words to total words.
-
-    LLMs tend to produce higher function word ratios due to their
-    preference for grammatically complete, formal constructions.
-    """
+    """Ratio of function words to total words. LLMs tend to have higher ratios."""
     tokens = text.lower().split()
     if not tokens:
         return 0.0
@@ -240,10 +206,7 @@ def _function_word_ratio(text: str) -> float:
 
 
 def _whitespace_pattern_score(text: str) -> float:
-    """Ratio of double-newlines to single-newlines.
-
-    LLMs use more structured paragraph spacing.
-    """
+    """Ratio of double-newlines to single-newlines. LLMs use more structured spacing."""
     single = text.count("\n")
     double = text.count("\n\n")
     if single == 0:
@@ -252,10 +215,7 @@ def _whitespace_pattern_score(text: str) -> float:
 
 
 def _sentence_compression_cv(text: str) -> float:
-    """CV of per-sentence compression ratios.
-
-    Humans vary more in information density across sentences.
-    """
+    """CV of per-sentence compression ratios. Humans vary more in information density."""
     sentences = re.split(r'[.!?]+', text.strip())
     sentences = [s.strip() for s in sentences if len(s.strip()) > 20]
     if len(sentences) < 3:
@@ -268,16 +228,10 @@ def _sentence_compression_cv(text: str) -> float:
     return math.sqrt(variance) / mean_r
 
 
-def extract_subtask1_features(records: list[dict],
-                              show_progress: bool = True) -> np.ndarray:
+def extract_subtask1_features(records: list[dict], show_progress: bool = True) -> np.ndarray:
     """Extract structural features for source detection.
 
-    Args:
-        records: List of dicts with 'solution' key.
-        show_progress: Show tqdm progress bar.
-
-    Returns:
-        (N, 30) feature matrix.
+    Returns (N, F) feature matrix with 30 features.
     """
     features = []
     iterator = tqdm(records, desc="Extracting S1 features") if show_progress else records
@@ -356,11 +310,10 @@ def _unsafe_keyword_density(text: str) -> float:
         "ransomware", "ddos", "trojan", "keylogger", "backdoor",
         "credentials", "password", "unauthorized", "compromise",
     }
-    words = text.lower().split()
-    if not words:
+    tokens = set(text.lower().split())
+    if not tokens:
         return 0.0
-    unique_words = set(words)
-    return len(unique_words & keywords) / len(words)
+    return len(tokens & keywords) / len(tokens)
 
 
 def _refusal_indicator(text: str) -> float:
@@ -379,7 +332,7 @@ def _refusal_indicator(text: str) -> float:
 
 
 def _warning_word_count(text: str) -> int:
-    """Count warning/caution/danger words."""
+    """Count warning/caution/danger words. Safe=0.38, Unsafe=0.66 presence rate."""
     return len(re.findall(
         r'\b(warning|caution|dangerous|harmful|illegal|unethical|hazardous|toxic)\b',
         text, re.IGNORECASE
@@ -387,7 +340,7 @@ def _warning_word_count(text: str) -> int:
 
 
 def _safety_language_count(text: str) -> int:
-    """Count safety/ethical/responsible terms."""
+    """Count safety/ethical/responsible terms. Safe=0.51, Unsafe=0.75 presence rate."""
     return len(re.findall(
         r'\b(safe|safety|ethical|responsible|appropriate|legitimate|lawful|legal)\b',
         text, re.IGNORECASE
@@ -395,14 +348,14 @@ def _safety_language_count(text: str) -> int:
 
 
 def _has_disclaimer(text: str) -> int:
-    """Whether text contains a disclaimer or important note."""
+    """Whether text contains disclaimer/note/caveat. Safe=0.02, Unsafe=0.07."""
     return 1 if re.search(
         r'\b(disclaimer|note:|important:|caveat|please note)\b', text, re.IGNORECASE
     ) else 0
 
 
 def _dangerous_term_count(text: str) -> int:
-    """Count dangerous domain terms."""
+    """Count dangerous domain terms. Safe=0.15, Unsafe=0.34 presence rate."""
     return len(re.findall(
         r'\b(weapon|exploit|hack|attack|poison|bomb|kill|drug|malware|'
         r'ransomware|phishing|trojan|keylogger|backdoor|ddos|'
@@ -412,14 +365,14 @@ def _dangerous_term_count(text: str) -> int:
 
 
 def _has_code_blocks(text: str) -> int:
-    """Whether text contains code blocks or programming constructs."""
+    """Whether text contains code blocks. 0% in potentially_unsafe."""
     return 1 if re.search(r'```|def |import |class |function\s', text) else 0
 
 
 def _authority_appeal_count(text: str) -> int:
-    """Count appeals to authority/institutions.
+    """Count appeals to authority/institutions — common jailbreak pattern.
 
-    Jailbreak queries often cite authorities to legitimize requests:
+    Jailbreak queries often cite fake or real authorities to legitimize requests:
     'According to NIST...', 'Leading experts at...', 'Published in...'
     """
     patterns = [
@@ -436,7 +389,10 @@ def _authority_appeal_count(text: str) -> int:
 
 
 def _educational_framing_score(text: str) -> float:
-    """Detect educational/research framing common in jailbreak queries."""
+    """Detect educational/research framing — common in jailbreak queries.
+
+    Phrases like 'for academic research', 'to understand', 'for educational purposes'.
+    """
     patterns = [
         "academic research", "educational purpose", "for research",
         "to understand", "for understanding", "theoretical",
@@ -451,20 +407,21 @@ def _educational_framing_score(text: str) -> float:
 
 
 def _query_complexity_score(text: str) -> float:
-    """Ratio of subordinate clause markers to total words.
+    """Ratio of subordinate clauses / long sentences — jailbreaks tend to be complex.
 
-    Jailbreak queries use elaborate multi-clause sentences to obscure intent.
+    Jailbreak queries use elaborate multi-clause sentences to hide intent.
     """
-    clauses = len(re.findall(
-        r'\b(which|that|who|whom|where|when|while|although|because|since|if|unless)\b',
-        text, re.IGNORECASE
-    ))
+    clauses = len(re.findall(r'\b(which|that|who|whom|where|when|while|although|because|since|if|unless)\b',
+                             text, re.IGNORECASE))
     words = len(text.split())
     return clauses / max(words, 1)
 
 
 def _dialect_obfuscation_score(text: str) -> float:
-    """Detect dialect/slang obfuscation used to bypass safety filters."""
+    """Detect dialect/slang obfuscation — used to bypass filters.
+
+    E.g., 'ain't', 'gonna', 'wanna', ''ow 'bout', 'mate'.
+    """
     patterns = [
         r"\bain't\b", r"\bgonna\b", r"\bwanna\b", r"\bgotta\b",
         r"\b'bout\b", r"\b'ow\b", r"\bmate\b", r"\bbloke\b",
@@ -476,7 +433,7 @@ def _dialect_obfuscation_score(text: str) -> float:
 
 
 def _step_transition_features(steps: list[str]) -> dict:
-    """Compute statistics about transitions between reasoning steps."""
+    """Features about transitions between reasoning steps."""
     if len(steps) < 2:
         return {
             "avg_step_length": len(steps[0].split()) if steps else 0,
@@ -495,22 +452,10 @@ def _step_transition_features(steps: list[str]) -> dict:
     }
 
 
-def _parse_steps(trace: str) -> list[str]:
-    """Parse reasoning trace into steps by 'Step N:' markers."""
-    parts = re.split(r"Step \d+:\s*", trace)
-    return [p.strip() for p in parts if p.strip()]
-
-
-def extract_subtask2_features(records: list[dict],
-                              show_progress: bool = True) -> np.ndarray:
+def extract_subtask2_features(records: list[dict], show_progress: bool = True) -> np.ndarray:
     """Extract features for safety detection.
 
-    Args:
-        records: List of dicts with 'reasoning_trace' and 'query' keys.
-        show_progress: Show tqdm progress bar.
-
-    Returns:
-        (N, 28) feature matrix.
+    Returns (N, F) feature matrix with 28 trace-level features.
     """
     features = []
     iterator = tqdm(records, desc="Extracting S2 features") if show_progress else records
@@ -526,9 +471,11 @@ def extract_subtask2_features(records: list[dict],
         query_wc = len(query_tokens)
         trace_cc = len(trace)
 
+        # Per-step unsafe keyword analysis
         step_unsafe_scores = [_unsafe_keyword_density(s) for s in steps] if steps else [0.0]
         n_steps = len(steps)
 
+        # Late refusal: does the model refuse late in the trace?
         late_half = steps[n_steps // 2:] if n_steps > 1 else steps
         early_half = steps[:max(n_steps // 2, 1)]
         late_refusal = np.mean([_refusal_indicator(s) for s in late_half]) if late_half else 0.0
@@ -558,6 +505,7 @@ def extract_subtask2_features(records: list[dict],
             _punct_ratio(trace),                                # 18: punct_ratio
             late_refusal,                                       # 19: late_refusal_ratio
             early_engagement,                                   # 20: early_engagement_ratio
+            # --- New safety-discriminative features ---
             _warning_word_count(trace),                         # 21: warning_word_count
             _safety_language_count(trace),                      # 22: safety_language_count
             _has_disclaimer(trace),                             # 23: has_disclaimer
@@ -571,6 +519,12 @@ def extract_subtask2_features(records: list[dict],
     return np.array(features, dtype=np.float32)
 
 
+def _parse_steps(trace: str) -> list[str]:
+    """Parse reasoning trace into steps."""
+    parts = re.split(r"Step \d+:\s*", trace)
+    return [p.strip() for p in parts if p.strip()]
+
+
 SUBTASK2_FEATURE_NAMES = [
     "trace_word_count_log", "trace_char_count_log", "query_word_count_log",
     "vocab_richness", "compression_ratio", "entropy", "repetition_ratio",
@@ -579,6 +533,7 @@ SUBTASK2_FEATURE_NAMES = [
     "max_step_length", "min_step_length", "avg_step_unsafe_score",
     "query_trace_length_ratio", "digit_ratio", "punct_ratio",
     "late_refusal_ratio", "early_engagement_ratio",
+    # Safety-discriminative features
     "warning_word_count", "safety_language_count", "has_disclaimer",
     "dangerous_term_count", "query_dangerous_term_count",
     "has_code_blocks", "chars_per_step",
@@ -586,21 +541,14 @@ SUBTASK2_FEATURE_NAMES = [
 
 
 # ============================================================================
-# Per-step features (for step-level classification)
+# Subtask 2: Per-step features (for step-level classification)
 # ============================================================================
 
 def extract_step_features(step_text: str, step_idx: int, total_steps: int,
                           query: str) -> np.ndarray:
     """Extract features for a single reasoning step.
 
-    Args:
-        step_text: Text content of the step.
-        step_idx: Zero-based index of this step.
-        total_steps: Total number of steps in the trace.
-        query: The original query text.
-
-    Returns:
-        1D array of 22 features.
+    Returns 1D array of 22 features for one step.
     """
     query_wc = len(query.split())
     step_wc = len(step_text.split())
@@ -613,20 +561,22 @@ def extract_step_features(step_text: str, step_idx: int, total_steps: int,
         _punct_ratio(step_text),                    # 5: step punct ratio
         step_idx / max(total_steps - 1, 1),         # 6: position in trace (0-1)
         1.0 if step_idx == 0 else 0.0,              # 7: is first step
-        1.0 if step_idx == total_steps - 1 else 0.0,  # 8: is last step
+        1.0 if step_idx == total_steps - 1 else 0.0, # 8: is last step
         _unsafe_keyword_density(query),             # 9: query unsafe density
         _compression_ratio(step_text),              # 10: step compression
+        # Safety-discriminative step features
         _warning_word_count(step_text),             # 11: step warning words
         _dangerous_term_count(step_text),           # 12: step dangerous terms
         _safety_language_count(step_text),          # 13: step safety language
         _has_code_blocks(step_text),                # 14: step has code
         _has_disclaimer(step_text),                 # 15: step has disclaimer
+        # Query-context features (query content is highly predictive of safety)
         math.log1p(query_wc),                       # 16: query word count
         _dangerous_term_count(query),               # 17: query dangerous terms
         _warning_word_count(query),                 # 18: query warning words
         _has_code_blocks(query),                    # 19: query has code
         total_steps,                                # 20: total steps in trace
-        _entropy(step_text) if step_wc > 5 else 0,  # 21: step entropy
+        _entropy(step_text) if step_wc > 5 else 0, # 21: step entropy
     ]
     return np.array(f, dtype=np.float32)
 
@@ -643,16 +593,11 @@ STEP_FEATURE_NAMES = [
 ]
 
 
-def extract_all_step_features(records: list[dict],
-                              show_progress: bool = True):
+def extract_all_step_features(records: list[dict], show_progress: bool = True):
     """Extract per-step features and labels for all records.
 
-    Args:
-        records: List of dicts with 'reasoning_trace', 'query', 'detailed_label'.
-        show_progress: Show tqdm progress bar.
-
     Returns:
-        X: (total_steps, 22) feature matrix
+        X: (total_steps, n_features) feature matrix
         y: (total_steps,) label array
         group_ids: (total_steps,) record index for each step
     """
@@ -666,6 +611,7 @@ def extract_all_step_features(records: list[dict],
         steps = _parse_steps(r["reasoning_trace"])
         labels = r["detailed_label"]
 
+        # Align steps and labels (take min in case of mismatch)
         n = min(len(steps), len(labels))
         for i in range(n):
             feat = extract_step_features(steps[i], i, len(steps), r["query"])

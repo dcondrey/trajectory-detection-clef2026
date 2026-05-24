@@ -1,13 +1,9 @@
 """Multi-LLM ensemble classifier for Subtask 1 (Source Detection).
 
-Calls multiple frontier LLMs to classify solutions as human or
-AI-generated, then ensembles via majority vote.
+Calls multiple LLMs to classify solutions as human or AI-generated,
+ensembles via majority vote. Can also combine with LightGBM features.
 
-Supported backends (configured via environment variables):
-    - GEMINI_API_KEY: Gemini 2.5 Flash
-    - GROQ_API_KEY: Llama 3.3 70B (via Groq)
-    - TOGETHER_API_KEY: Llama 3.3 70B (via Together)
-    - MISTRAL_API_KEY: Mistral Large
+Working APIs: Gemini 2.5 Flash, Groq (Llama 3.3 70B), Together (Llama 3.3 70B), Mistral Large
 """
 
 import asyncio
@@ -16,16 +12,22 @@ import json
 import logging
 import os
 import re
+import sys
 import zipfile
 from pathlib import Path
 
 import numpy as np
 
-from rtd.data_loader import load_subtask1
+sys.path.insert(0, str(Path(__file__).parent))
 
+from data_loader import load_subtask1
+
+logging.basicConfig(level=logging.INFO, format="%(message)s")
 log = logging.getLogger(__name__)
 
-CACHE_DIR = Path(__file__).resolve().parent.parent / "cache" / "llm_ensemble_s1"
+PROJECT = Path(__file__).resolve().parent.parent
+CACHE_DIR = PROJECT / "cache" / "llm_ensemble_s1"
+CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 SYSTEM_PROMPT = """You are detecting whether a solution to a problem was written by a human or by an AI language model.
 
@@ -68,7 +70,7 @@ def _openai_compatible_call(url, api_key, model):
 
 
 async def call_gemini(problem: str, solution: str) -> str | None:
-    """Call Gemini API (non-OpenAI format)."""
+    """Call Gemini API."""
     import httpx
 
     api_key = os.environ.get("GEMINI_API_KEY")
@@ -178,7 +180,7 @@ async def classify_single(record: dict, models: list[str], callers: dict,
 
 
 def ensemble_vote(model_labels: dict) -> str:
-    """Majority vote across models. Ties go to 'ai'."""
+    """Majority vote. Ties go to ai."""
     labels = [l for l in model_labels.values() if l != "unknown"]
     if not labels:
         return "ai"
@@ -190,22 +192,9 @@ def ensemble_vote(model_labels: dict) -> str:
 
 
 async def run_ensemble(split: str, models: list[str], batch_size: int = 15,
-                       cache_name: str = "default",
-                       data_dir: Path | None = None) -> list[dict]:
-    """Run multi-LLM ensemble on all records.
-
-    Args:
-        split: Data split ('train', 'validation', 'test').
-        models: List of model names to use.
-        batch_size: Number of concurrent classifications.
-        cache_name: Name for the cache file.
-        data_dir: Override default data directory.
-
-    Returns:
-        List of result dicts with 'id', 'label', 'model_labels'.
-    """
-    CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    records = load_subtask1(split, data_dir)
+                       cache_name: str = "default") -> list[dict]:
+    """Run multi-LLM ensemble on all records."""
+    records = load_subtask1(split)
     log.info("Loaded %d records (%s)", len(records), split)
 
     callers = build_callers()
@@ -268,7 +257,19 @@ async def run_ensemble(split: str, models: list[str], batch_size: int = 15,
 
     from collections import Counter
     label_counts = Counter(r["label"] for r in all_results)
-    log.info("Ensemble predictions: %s", dict(label_counts))
+    log.info("\nEnsemble predictions:")
+    for lbl, cnt in sorted(label_counts.items()):
+        log.info("  %s: %d (%.1f%%)", lbl, cnt, 100 * cnt / len(all_results))
+
+    for model_name in models:
+        model_labels = [r["model_labels"].get(model_name, "unknown") for r in all_results]
+        model_counts = Counter(model_labels)
+        log.info("  %s: %s", model_name, dict(model_counts))
+
+    agree = sum(1 for r in all_results
+                if len(set(l for l in r["model_labels"].values() if l != "unknown")) <= 1)
+    log.info("  Agreement: %d / %d (%.1f%%)", agree, len(all_results),
+             100 * agree / len(all_results))
 
     return all_results
 
@@ -289,3 +290,32 @@ def write_submission(results: list[dict], output_dir: Path):
 
     log.info("Submission: %s (%d predictions)", zip_path, len(results))
     return zip_path
+
+
+def main():
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--split", default="test")
+    parser.add_argument("--models", default="gemini,groq_llama70b,together_llama70b,mistral_large")
+    parser.add_argument("--batch-size", type=int, default=15)
+    parser.add_argument("--cache-name", default="ensemble_v1")
+    args = parser.parse_args()
+
+    models = [m.strip() for m in args.models.split(",")]
+
+    log.info("=" * 60)
+    log.info("  S1 Multi-LLM Ensemble Classifier")
+    log.info("=" * 60)
+
+    results = asyncio.run(run_ensemble(
+        args.split, models,
+        batch_size=args.batch_size,
+        cache_name=args.cache_name,
+    ))
+
+    output_dir = PROJECT / "codabench_submissions" / args.split / "subtask1"
+    write_submission(results, output_dir)
+
+
+if __name__ == "__main__":
+    main()

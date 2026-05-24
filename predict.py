@@ -1,149 +1,194 @@
-"""Inference entry point for both subtasks.
+"""Generate CodaBench submission CSVs for PAN-CLEF 2026 Reasoning Trajectory Detection.
 
-Generates competition submissions for PAN@CLEF 2026 Reasoning Trajectory
-Detection. Supports heuristic, LightGBM, and LLM ensemble approaches.
-
-Usage:
-    uv run python predict.py --subtask 1 --input data/subtask1/test/
-    uv run python predict.py --subtask 2 --input data/subtask2/test/
-    uv run python predict.py --subtask 1 --method lgb --model-dir models/
+Subtask 1: submission.csv with columns ID, label (human/ai)
+Subtask 2: submission.csv with columns ID, label (safe/unsafe), detailed_label (per-step probs)
 """
 
-import argparse
 import csv
 import json
 import logging
-import zipfile
+import re
+import sys
 from pathlib import Path
 
+import lightgbm as lgb
 import numpy as np
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 log = logging.getLogger(__name__)
 
+SRC_DIR = Path(__file__).parent / "src"
+sys.path.insert(0, str(SRC_DIR))
 
-def predict_s1_lgb(input_dir: Path, model_dir: Path, output_dir: Path):
-    """Predict Subtask 1 using LightGBM ensemble."""
-    import lightgbm as lgb
+from features import extract_subtask1_features, extract_subtask2_features
+from data_loader import parse_reasoning_steps
 
-    from rtd.data_loader import load_jsonl
-    from rtd.features import extract_subtask1_features
+MODEL_DIR = Path(__file__).parent / "models"
+DATA_DIR = Path(__file__).parent / "data"
+OUTPUT_DIR = Path(__file__).parent / "codabench_submissions"
 
-    config_path = model_dir / "subtask1_config.json"
-    with open(config_path) as f:
-        config = json.load(f)
 
-    threshold = config["threshold"]
-    seeds = config["seeds"]
-
-    log.info("Loading models (threshold=%.3f, %d seeds)...", threshold, len(seeds))
-    models = []
-    for seed in seeds:
-        model_path = model_dir / f"subtask1_seed{seed}.txt"
-        models.append(lgb.Booster(model_file=str(model_path)))
-
+def load_jsonl(path):
     records = []
-    for f in sorted(input_dir.glob("*.jsonl")):
-        records.extend(load_jsonl(f))
-    log.info("Loaded %d test records", len(records))
+    with open(path, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                records.append(json.loads(line))
+    return records
+
+
+def generate_subtask1():
+    log.info("=== Subtask 1: Source Detection ===")
+    test_path = DATA_DIR / "subtask1" / "test" / "subtask1_test.jsonl"
+    records = load_jsonl(test_path)
+    log.info(f"  Loaded {len(records)} test records")
+
+    model_paths = [
+        MODEL_DIR / "subtask1_lgb_combined.txt",
+        MODEL_DIR / "subtask1_lgb_structural.txt",
+        MODEL_DIR / "subtask1_lgb.txt",
+    ]
+    model = None
+    for mp in model_paths:
+        if mp.exists():
+            model = lgb.Booster(model_file=str(mp))
+            log.info(f"  Loaded model: {mp.name}")
+            break
+
+    if model is None:
+        log.info("  ERROR: No subtask1 model found")
+        return
 
     X = extract_subtask1_features(records)
-    probs = np.mean([m.predict(X) for m in models], axis=0)
-    preds = (probs > threshold).astype(int)
+    n_expected = model.num_feature()
+    if X.shape[1] != n_expected:
+        log.info(f"  Feature adjustment: {X.shape[1]} -> {n_expected}")
+        X = X[:, :n_expected] if X.shape[1] > n_expected else np.pad(
+            X, ((0, 0), (0, n_expected - X.shape[1]))
+        )
 
-    output_dir.mkdir(parents=True, exist_ok=True)
-    csv_path = output_dir / "submission.csv"
-    with open(csv_path, "w", newline="", encoding="utf-8") as f:
+    probs = model.predict(X)
+    preds = (probs > 0.5).astype(int)
+
+    out_dir = OUTPUT_DIR / "subtask1"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    csv_path = out_dir / "submission.csv"
+
+    with open(csv_path, "w", newline="") as f:
         writer = csv.writer(f)
         writer.writerow(["ID", "label"])
-        for r, p in zip(records, preds):
-            label = "human" if p == 0 else "ai"
-            writer.writerow([r.get("id", r.get("solution_id", "")), label])
+        for i, record in enumerate(records):
+            rid = record["id"]
+            label = "ai" if preds[i] == 1 else "human"
+            writer.writerow([rid, label])
 
-    zip_path = output_dir / "subtask1_submission.zip"
-    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
-        zf.write(csv_path, "submission.csv")
-
-    from collections import Counter
-    label_counts = Counter("human" if p == 0 else "ai" for p in preds)
-    log.info("Predictions: %s", dict(label_counts))
-    log.info("Submission: %s", zip_path)
+    n_ai = int(preds.sum())
+    n_human = len(preds) - n_ai
+    log.info(f"  Predictions: {n_human} human, {n_ai} ai")
+    log.info(f"  Written to: {csv_path}")
 
 
-def predict_s2_heuristic(input_dir: Path, output_dir: Path,
-                         config_path: Path | None = None):
-    """Predict Subtask 2 using heuristic classifier."""
-    from rtd.data_loader import load_jsonl
-    from rtd.refusal_detector import classify_trace
+def generate_subtask2():
+    log.info("\n=== Subtask 2: Safety Detection ===")
+    test_path = DATA_DIR / "subtask2" / "test" / "subtask2_test.jsonl"
+    records = load_jsonl(test_path)
+    log.info(f"  Loaded {len(records)} test records")
 
-    jaccard_thresh = 0.080
-    length_thresh = 3500
-    if config_path and config_path.exists():
-        with open(config_path) as f:
-            config = json.load(f)
-        jaccard_thresh = config.get("jaccard_threshold", jaccard_thresh)
-        length_thresh = config.get("length_threshold", length_thresh)
+    # Load thresholds
+    thresh_paths = [
+        MODEL_DIR / "subtask2_thresholds_v4.json",
+        MODEL_DIR / "subtask2_thresholds_v3.json",
+        MODEL_DIR / "subtask2_thresholds.json",
+    ]
+    thresholds = None
+    for tp in thresh_paths:
+        if tp.exists():
+            with open(tp) as f:
+                thresholds = json.load(f)
+            log.info(f"  Loaded thresholds: {tp.name}")
+            break
 
-    records = []
-    for f in sorted(input_dir.glob("*.jsonl")):
-        records.extend(load_jsonl(f))
-    log.info("Loaded %d test records", len(records))
+    # Extract trace features
+    X_trace = extract_subtask2_features(records)
+    log.info(f"  Trace features: {X_trace.shape}")
 
-    output_dir.mkdir(parents=True, exist_ok=True)
-    csv_path = output_dir / "submission.csv"
-    with open(csv_path, "w", newline="", encoding="utf-8") as f:
+    # Multi-seed ensemble
+    seeds = [42, 123, 456, 789, 1337]
+    prob_a_all, prob_b_all = [], []
+    for seed in seeds:
+        ma = MODEL_DIR / f"subtask2_trace_model_a_seed{seed}.txt"
+        mb = MODEL_DIR / f"subtask2_trace_model_b_seed{seed}.txt"
+        if ma.exists() and mb.exists():
+            m_a = lgb.Booster(model_file=str(ma))
+            m_b = lgb.Booster(model_file=str(mb))
+            n_a = m_a.num_feature()
+            X_a = X_trace[:, :n_a] if X_trace.shape[1] >= n_a else np.pad(
+                X_trace, ((0, 0), (0, n_a - X_trace.shape[1]))
+            )
+            n_b = m_b.num_feature()
+            X_b = X_trace[:, :n_b] if X_trace.shape[1] >= n_b else np.pad(
+                X_trace, ((0, 0), (0, n_b - X_trace.shape[1]))
+            )
+            prob_a_all.append(m_a.predict(X_a))
+            prob_b_all.append(m_b.predict(X_b))
+
+    if not prob_a_all:
+        log.info("  ERROR: No subtask2 models found")
+        return
+
+    prob_a = np.mean(prob_a_all, axis=0)
+    prob_b = np.mean(prob_b_all, axis=0)
+    ta = thresholds.get("ta", thresholds.get("thresh_a", 0.36)) if thresholds else 0.36
+    tb = thresholds.get("tb", thresholds.get("thresh_b", 0.40)) if thresholds else 0.40
+
+    trace_preds = []
+    for i in range(len(prob_a)):
+        if prob_a[i] < ta:
+            trace_preds.append("safe")
+        elif prob_b[i] > tb:
+            trace_preds.append("unsafe")
+        else:
+            trace_preds.append("unsafe")
+
+    # Step-level: derive from trace prediction + prob_a as step confidence
+    step_labels_per_record = []
+    for i, record in enumerate(records):
+        trace_text = record.get("reasoning_trace", "")
+        steps = re.split(r"(?:步骤|Step)\s*\d+\s*[：:]", trace_text)
+        steps = [s.strip() for s in steps if s.strip()]
+        n_steps = max(1, len(steps))
+
+        if trace_preds[i] == "safe":
+            step_probs = [1.0] * n_steps
+        else:
+            base_unsafe = float(prob_a[i])
+            step_probs = [round(1.0 - base_unsafe, 4)] * n_steps
+
+        step_labels_per_record.append(step_probs)
+
+    # Write CSV
+    out_dir = OUTPUT_DIR / "subtask2"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    csv_path = out_dir / "submission.csv"
+
+    with open(csv_path, "w", newline="") as f:
         writer = csv.writer(f)
         writer.writerow(["ID", "label", "detailed_label"])
-        for rec in records:
-            label, detailed = classify_trace(rec["query"], rec["reasoning_trace"])
-            writer.writerow([rec["id"], label, detailed])
+        for i, record in enumerate(records):
+            rid = record["id"]
+            label = trace_preds[i]
+            detailed = "|".join(str(p) for p in step_labels_per_record[i])
+            writer.writerow([rid, label, detailed])
 
-    zip_path = output_dir / "subtask2_submission.zip"
-    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
-        zf.write(csv_path, "submission.csv")
-
-    log.info("Submission: %s", zip_path)
-
-
-def main():
-    parser = argparse.ArgumentParser(description="Generate predictions for PAN@CLEF 2026")
-    parser.add_argument("--subtask", type=int, required=True, choices=[1, 2],
-                        help="Subtask number")
-    parser.add_argument("--input", type=Path, required=True,
-                        help="Input directory with test JSONL files")
-    parser.add_argument("--output", type=Path, default=Path("submissions"),
-                        help="Output directory")
-    parser.add_argument("--method", choices=["lgb", "heuristic", "ensemble"],
-                        default=None,
-                        help="Prediction method (default: lgb for S1, heuristic for S2)")
-    parser.add_argument("--model-dir", type=Path, default=Path("models"),
-                        help="Model directory (for lgb method)")
-    args = parser.parse_args()
-
-    method = args.method
-    if method is None:
-        method = "lgb" if args.subtask == 1 else "heuristic"
-
-    output_dir = args.output / f"subtask{args.subtask}"
-
-    log.info("=" * 60)
-    log.info("  Subtask %d Prediction (%s)", args.subtask, method)
-    log.info("=" * 60)
-
-    if args.subtask == 1:
-        if method == "lgb":
-            predict_s1_lgb(args.input, args.model_dir, output_dir)
-        else:
-            log.error("Unsupported method '%s' for subtask 1", method)
-            raise SystemExit(1)
-    else:
-        if method == "heuristic":
-            config_path = args.model_dir / "subtask2_config.json"
-            predict_s2_heuristic(args.input, output_dir, config_path)
-        else:
-            log.error("Unsupported method '%s' for subtask 2", method)
-            raise SystemExit(1)
+    n_safe = trace_preds.count("safe")
+    n_unsafe = len(trace_preds) - n_safe
+    log.info(f"  Predictions: {n_safe} safe, {n_unsafe} unsafe")
+    log.info(f"  Written to: {csv_path}")
 
 
 if __name__ == "__main__":
-    main()
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    generate_subtask1()
+    generate_subtask2()
+    log.info("\nDone! Submission files ready in: %s", OUTPUT_DIR)
