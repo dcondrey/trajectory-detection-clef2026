@@ -19,6 +19,15 @@ The training set was 100% mathematics. The test set was 64% business, 13% financ
 
 This repository contains the system we built after that autopsy.
 
+## Official Results (PAN 2026 leaderboard)
+
+| Subtask | Macro F1 | Rank | Final system |
+|---|---|---|---|
+| **1 — Source Detection** | **0.85** | **1st** of 9 | Claude Opus 4.6 – Sonnet 4.6 agreement (LightGBM breaks ties) |
+| **2 — Safety Classification** | **0.66** | **3rd** of 7 | Multi-signal union (also **2nd** on soft F1 at 0.27) |
+
+The feature-based and heuristic components described below are the interpretable backbone; the top scores came from combining them with frontier-LLM agreement. Full analysis is in the paper (see [Citation](#citation)).
+
 ## System Overview
 
 **Subtask 1 -- Source Detection:** Is this reasoning trajectory written by a human or an LLM?
@@ -129,7 +138,8 @@ We introduce a three-category taxonomy for feature robustness under domain shift
 |---|---|---|
 | LightGBM 19-feat (structural only) | 0.9746 | -- (overfit) |
 | LightGBM 28-feat (+ generator features) | 0.7139 | 0.6809 |
-| LightGBM 30-feat (+ vocab fingerprints) | -- | 0.78+ |
+| LightGBM 30-feat (+ vocab fingerprints) | -- | 0.75 |
+| **Opus–Sonnet agreement (final, submitted)** | -- | **0.85 — 1st place** |
 | LLM Ensemble (4 models) | -- | competitive |
 
 ### Subtask 2: Safety Classification
@@ -167,14 +177,15 @@ trajectory-detection-clef2026/
 ## Citation
 
 ```bibtex
-@inproceedings{condrey2026rtd,
-  title     = {When Features Die: Vocabulary Fingerprints and Multilingual
-               Refusal Detection for Reasoning Trajectory Analysis},
+@inproceedings{condrey2026pan,
+  title     = {Writerslogic at {PAN} 2026: Process over Content for Robust
+               Detection under Domain Shift},
   author    = {Condrey, David},
-  booktitle = {Working Notes of CLEF 2026},
+  booktitle = {Working Notes of CLEF 2026 -- Conference and Labs of the Evaluation Forum},
   series    = {CEUR Workshop Proceedings},
   year      = {2026},
-  publisher = {CEUR-WS.org}
+  publisher = {CEUR-WS.org},
+  note      = {Reasoning Trajectory Detection is one of three PAN tasks in this paper; to appear}
 }
 ```
 
