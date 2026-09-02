@@ -1,10 +1,14 @@
-# When Features Die: Reasoning Trajectory Detection at PAN@CLEF 2026
+<!-- repo-header:start -->
+<img src="https://github.com/dcondrey.png?size=160" alt="When Features Die: Reasoning Trajectory Detection at PAN@CLEF 2026 logo" width="120" align="left">
 
-[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![PAN@CLEF 2026](https://img.shields.io/badge/PAN%40CLEF-2026-green.svg)](https://pan.webis.de/clef26/pan26-web/index.html)
+<h1>When Features Die: Reasoning Trajectory Detection at PAN@CLEF 2026</h1>
 
-We trained a feature-based classifier to detect AI-generated reasoning trajectories. It achieved 97% F1 on validation. Then the test set arrived.
+<p><strong>PAN@CLEF 2026 Reasoning Trajectory Detection: 1st place source detection (0.85 F1) and 3rd safety classification (0.66 F1) — feature robustness under domain shift.</strong></p>
+
+<br clear="left">
+
+[![CI](https://img.shields.io/github/actions/workflow/status/dcondrey/trajectory-detection-clef2026/slsa-provenance.yml?style=flat-square&labelColor=20232a&branch=main&label=CI)](https://github.com/dcondrey/trajectory-detection-clef2026/actions/workflows/slsa-provenance.yml) [![Best Practices Evidence](https://img.shields.io/badge/best%20practices-evidence%20reviewed-6a4c93?style=flat-square&labelColor=20232a)](.bestpractices.json) [![License](https://img.shields.io/github/license/dcondrey/trajectory-detection-clef2026?style=flat-square&labelColor=20232a&color=007ec6&label=license)](https://github.com/dcondrey/trajectory-detection-clef2026/blob/main/LICENSE) [![SLSA provenance](https://img.shields.io/github/actions/workflow/status/dcondrey/trajectory-detection-clef2026/slsa-provenance.yml?style=flat-square&labelColor=20232a&branch=main&label=SLSA)](https://github.com/dcondrey/trajectory-detection-clef2026/actions/workflows/slsa-provenance.yml) [![Code of Conduct](https://img.shields.io/badge/code%20of%20conduct-Contributor%20Covenant%202.1-6a4c93?style=flat-square&labelColor=20232a)](https://github.com/dcondrey/trajectory-detection-clef2026/blob/main/CODE_OF_CONDUCT.md) [![GitHub Sponsors](https://img.shields.io/badge/GitHub%20Sponsors-Sponsor-EA4AAA?style=flat-square&labelColor=20232a)](https://github.com/sponsors/dcondrey)
+<!-- repo-header:end -->
 
 | Feature | Train Fire Rate | Test Fire Rate | Status |
 |---|---|---|---|
